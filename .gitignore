@@ -1,0 +1,4 @@
+.env
+wireguard/
+node_modules/
+__pycache__/
