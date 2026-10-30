@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: yamllint
+        run: |
+          pip install yamllint
+          yamllint -c .yamllint.yml docker-compose.yml .github/workflows
+      - name: shellcheck
+        run: shellcheck install.sh scripts/*.sh
+
+  build:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kiem tra cu phap compose
+        run: |
+          cp .env.example .env
+          docker compose config -q
+      - name: Build backend/frontend neu co
+        run: |
+          if [ -f backend/Dockerfile ] && [ -f frontend/Dockerfile ]; then
+            docker compose --profile app build
+          else
+            echo "Chua co backend/frontend Dockerfile, bo qua build."
+          fi
+
+  test-compose:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Khoi dong Pi-hole + Unbound
+        run: |
+          cp .env.example .env
+          echo "DNS_PORT=5353" >> .env
+          docker compose up -d unbound pihole
+      - name: Cho Pi-hole healthy
+        run: |
+          for i in $(seq 1 30); do
+            s=$(docker inspect -f '{{.State.Health.Status}}' pihole 2>/dev/null || echo starting)
+            echo "pihole: $s"
+            [ "$s" = "healthy" ] && exit 0
+            sleep 5
+          done
+          docker compose logs
+          exit 1
+      - name: Thu phan giai DNS qua Pi-hole
+        run: |
+          sudo apt-get install -y dnsutils >/dev/null
+          dig @127.0.0.1 -p 5353 example.com +short | grep -E '^[0-9]'
+      - name: Thu Pi-hole web
+        run: curl -fsS -o /dev/null http://localhost:8081/admin/
+      - name: Don dep
+        if: always()
+        run: docker compose down -v
